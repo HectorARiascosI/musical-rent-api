@@ -404,6 +404,8 @@ Reglas:
 - No debe existir otra reserva confirmada que se cruce.
 - Una reserva cancelada no puede confirmarse.
 - Al confirmar, el instrumento pasa a `RESERVADO`.
+- Al finalizar el prestamo, la reserva pasa a `FINALIZADA`.
+- La reserva no debe cambiar el instrumento a `RESERVADO` al crearse; ese cambio ocurre al confirmarse.
 
 ### 7.7 Prestamo
 
@@ -419,6 +421,7 @@ Atributos:
 - `CondicionFisica condicionAlDevolver`.
 - `String observacionesEntrega`.
 - `String observacionesDevolucion`.
+- `BigDecimal costoTotal`.
 - `EstadoPrestamo estado`.
 
 Estados:
@@ -437,6 +440,9 @@ Reglas:
 - Al devolver, se registra fecha y condicion.
 - Un prestamo devuelto no puede devolverse otra vez.
 - Si el instrumento vuelve danado, puede pasar a `EN_REPARACION`.
+- Al devolver, la reserva relacionada pasa a `FINALIZADA`.
+- `ATRASADO` se calcula cuando la fecha actual supera la fecha esperada y el prestamo sigue activo.
+- Debe definirse si `ATRASADO` se persiste o se calcula como una proyeccion de lectura.
 
 ### 7.8 Registro de condicion
 
@@ -508,6 +514,16 @@ ACTIVO
 DEVUELTO
 ATRASADO
 ```
+
+Regla de `ATRASADO`:
+
+```text
+prestamo.estado == ACTIVO
+Y
+ahora > reserva.periodo.fechaDevolucion
+```
+
+La primera version puede calcularlo en consultas para evitar un proceso automatico. Si se persiste, debe existir un proceso programado o una accion explicita que lo actualice.
 
 ### MomentoCondicion
 
@@ -1424,6 +1440,231 @@ Cada respuesta debe registrarse como decision y no quedar solo en una conversaci
 
 ---
 
+## 31.5 Cobertura de los temas de HotelSpringBoot
+
+Esta tabla evita que MusicalRent sea solamente una idea parecida al hotel. Cada tema que ya existe en `HotelSpringBoot` debe aparecer en el nuevo proyecto con una correspondencia explicita.
+
+En esta tabla, `Documentado` significa que el tema esta definido en el plan. No significa que ya exista codigo implementado.
+
+| Tema visto en HotelSpringBoot | Evidencia en el hotel | Aplicacion en MusicalRent | Estado |
+|---|---|---|---|
+| Entidades JPA | `Cliente`, `Habitacion`, `Reserva` | `Cliente`, `Instrumento`, `Reserva`, `Prestamo` | Documentado |
+| Dominio rico | Constructores y metodos de estado | Metodos `reservar`, `alquilar`, `devolver`, `reparar` | Documentado |
+| Invariantes | Validaciones en constructores | Validaciones de cliente, instrumento, fechas y estados | Documentado |
+| Herencia | `Habitacion` con `JOINED` | `Instrumento` con `JOINED` y dos tipos de guitarra | Documentado |
+| Polimorfismo | Repositorio del tipo padre | Request con `tipo` y mapper por subtipo | Documentado |
+| Objetos de valor | `RangoFechas` como `@Embeddable record` | `PeriodoAlquiler` como `@Embeddable record` | Documentado |
+| Enums persistidos | `EstadoHabitacion`, `EstadoReserva` | Estados de disponibilidad, reserva, prestamo y condicion | Documentado |
+| DTO request | `CrearClienteRequest`, `CrearReservaRequest` | Requests de cliente, instrumento, reserva y prestamo | Documentado |
+| DTO response | `ClienteResponse`, `ReservaResponse` | Responses simples, polimorficos y anidados | Documentado |
+| MapStruct | `ClienteMapper`, `ReservaMapper` | Mappers de creacion, lectura, polimorfismo y PATCH | Documentado |
+| Listas mapeadas | `toResponseList` | Listas de clientes, instrumentos, reservas y prestamos | Pendiente de detallar |
+| Ignorar campos | `id`, estado y relaciones ignoradas | Ignorar identidad, tipo, historial y estados protegidos | Cubierto |
+| Expresiones de mapper | Estado convertido con `.name()` | Estados y subtipos convertidos sin exponer entidades | Pendiente de implementar |
+| Repositorios | `JpaRepository` y metodos derivados | Busquedas por codigo, cliente, estado y cruces de fechas | Documentado |
+| Servicios | Casos de uso y coordinacion | Crear, confirmar, cancelar, entregar y devolver | Documentado |
+| Inyeccion por constructor | Servicios y controllers | Todas las dependencias por constructor | Documentado |
+| Transacciones | `@Transactional` y `readOnly` | Escrituras atomicas y lecturas de consulta | Documentado |
+| REST | `POST`, `GET`, `201`, `Location` | CRUD y acciones de reservas/prestamos | Documentado |
+| Prueba de contexto | `@SpringBootTest` | Prueba de arranque con perfil de test | Pendiente de detallar |
+| PostgreSQL | `application.properties` | Configuracion local y variables de entorno | Pendiente de detallar |
+| Maven y Java 17 | `pom.xml` y Maven Wrapper | `pom.xml`, wrapper y procesador MapStruct | Pendiente de detallar |
+
+### 31.6 Temas del hotel que no se deben perder
+
+#### Penalizaciones del cliente
+
+El hotel tiene `registrarPenalizacion`, `reactivar` y `puedeRealizarReservas`. MusicalRent debe conservar el aprendizaje, aunque el nombre del negocio cambie:
+
+- Un cliente puede recibir penalizaciones por devolucion tardia o dano.
+- El cliente puede quedar inactivo al alcanzar el limite definido.
+- Una reserva debe comprobar `puedeRealizarReservas()`.
+- La penalizacion debe ser una accion de dominio, no una asignacion desde el controller.
+
+#### Costo total
+
+El hotel calcula `costoTotal` al crear la reserva. MusicalRent debe calcular un `costoEstimado` o `costoTotal` usando `BigDecimal` y los dias del `PeriodoAlquiler`:
+
+```text
+costoTotal = precioDiario * diasFacturables
+```
+
+Debe definirse si un periodo de cero dias cobra minimo un dia, igual que el hotel usa `Math.max(1, dias)`. La regla no puede quedar implicita.
+
+#### Relaciones JPA
+
+La implementacion debe documentar explicitamente:
+
+- Si `Cliente` tiene `@OneToMany(mappedBy = "cliente")`.
+- Si `Reserva` usa `@ManyToOne(fetch = FetchType.LAZY, optional = false)`.
+- Si `Prestamo` tiene relacion uno a uno o uno a muchos con reserva.
+- Donde se permite `cascade`.
+- Donde se permite `orphanRemoval`.
+- Como se evita serializar relaciones en ciclo.
+
+#### Constructor protegido de JPA
+
+Cada entidad y cada subtipo debe tener un constructor vacio `protected` para Hibernate y un constructor publico que cree objetos validos para el dominio.
+
+---
+
+### 31.7 Equivalencia de infraestructura con HotelSpringBoot
+
+MusicalRent debe conservar tambien la forma de arrancar, compilar y probar que tiene el proyecto del hotel.
+
+#### `pom.xml`
+
+Debe incluir como minimo:
+
+- `spring-boot-starter-web`.
+- `spring-boot-starter-data-jpa`.
+- `spring-boot-starter-validation`.
+- `postgresql` con alcance runtime.
+- `mapstruct`.
+- `mapstruct-processor` en `annotationProcessorPaths`.
+- `spring-boot-starter-test` con alcance test.
+- Java 17.
+- Maven Compiler Plugin.
+- Spring Boot Maven Plugin.
+
+#### Maven Wrapper
+
+El repositorio debe incluir:
+
+```text
+mvnw
+mvnw.cmd
+.mvn/wrapper
+```
+
+Comandos oficiales del proyecto:
+
+```powershell
+./mvnw.cmd compile
+./mvnw.cmd test
+./mvnw.cmd spring-boot:run
+```
+
+#### `application.properties`
+
+La configuracion local debe documentarse sin subir secretos reales:
+
+```properties
+spring.application.name=musical-rent
+spring.datasource.url=${DB_URL:jdbc:postgresql://localhost:5432/musical_rent_db}
+spring.datasource.username=${DB_USERNAME:postgres}
+spring.datasource.password=${DB_PASSWORD:postgres}
+spring.datasource.driver-class-name=org.postgresql.Driver
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.format_sql=true
+```
+
+Para produccion o una entrega formal se deben usar migraciones y secretos externos en lugar de depender de `ddl-auto=update` y contrasenas por defecto.
+
+#### Repositorios equivalentes
+
+Como en HotelSpringBoot, los metodos derivados deben expresar consultas simples:
+
+```text
+ClienteRepository.findByNumeroIdentificacion(...)
+InstrumentoRepository.findByCodigoInventario(...)
+InstrumentoRepository.findByEstadoDisponibilidad(...)
+ReservaRepository.findByClienteId(...)
+ReservaRepository.findByInstrumentoId(...)
+PrestamoRepository.findByEstado(...)
+RegistroCondicionRepository.findByInstrumentoIdOrderByFechaRegistroDesc(...)
+```
+
+La consulta de cruces de fechas puede requerir JPQL, una consulta nativa o una Specification. La decision debe documentarse y probarse con casos limite.
+
+#### Prueba de contexto
+
+Debe existir una prueba equivalente a `HotelApplicationTests`:
+
+```java
+@SpringBootTest
+class MusicalRentApplicationTests {
+
+  @Test
+  void contextLoads() {
+  }
+}
+```
+
+La prueba no debe depender accidentalmente de una base de datos personal. Se recomienda un perfil de test con una base aislada o Testcontainers cuando el equipo este preparado.
+
+---
+
+### 31.8 Contrato interno de mappers, services y controllers
+
+#### Mappers
+
+Los mappers deben tener metodos pequenos y verificables. Como minimo se esperan:
+
+```text
+ClienteMapper.toResponse(Cliente)
+ClienteMapper.toResponseList(List<Cliente>)
+ClienteMapper.toEntity(CrearClienteRequest)
+InstrumentoMapper.toGuitarraAcustica(CrearInstrumentoRequest)
+InstrumentoMapper.toGuitarraElectrica(CrearInstrumentoRequest)
+InstrumentoMapper.toResponse(GuitarraAcustica)
+InstrumentoMapper.toResponse(GuitarraElectrica)
+InstrumentoMapper.updateEntity(ActualizarInstrumentoRequest, Instrumento)
+ReservaMapper.toResponse(Reserva)
+ReservaMapper.toResponseList(List<Reserva>)
+PrestamoMapper.toResponse(Prestamo)
+```
+
+MapStruct debe reportar advertencias de propiedades no mapeadas. No se deben silenciar sin documentar si el campo se ignora intencionalmente.
+
+Para una respuesta de reserva, los campos derivados deben mapearse explicitamente:
+
+```text
+cliente.nombre -> cliente.nombre
+instrumento.codigoInventario -> instrumento.codigoInventario
+periodo.fechaInicio -> fechaInicio
+periodo.fechaDevolucion -> fechaDevolucion
+estado.name() -> estado
+```
+
+Esto evita repetir el problema observado en `ReservaMapper` de HotelSpringBoot, donde varias propiedades de `ReservaResponse` quedan sin mapear automaticamente.
+
+#### Services
+
+Cada Service debe ofrecer casos de uso, no metodos genericos que permitan cualquier cambio:
+
+```text
+ClienteService.crear(...)
+ClienteService.listarTodos()
+ClienteService.obtenerPorId(...)
+InstrumentoService.crear(...)
+InstrumentoService.listar(...)
+InstrumentoService.obtenerPorId(...)
+ReservaService.crear(...)
+ReservaService.confirmar(...)
+ReservaService.cancelar(...)
+PrestamoService.entregar(...)
+PrestamoService.devolver(...)
+```
+
+Las escrituras deben usar `@Transactional`. Las consultas deben usar `@Transactional(readOnly = true)` cuando corresponda.
+
+#### Controllers
+
+Cada Controller debe:
+
+- Usar `@RestController`.
+- Definir una ruta base con `@RequestMapping`.
+- Recibir DTOs, no entidades.
+- Usar `@Valid`.
+- Usar `@PathVariable` para identificadores.
+- Usar `ResponseEntity` cuando el codigo o la cabecera importen.
+- Crear `Location` en respuestas `201 Created`.
+- Delegar la logica en el Service.
+
+---
+
 ## 32. Requisitos funcionales
 
 Los requisitos funcionales describen acciones que el sistema debe realizar.
@@ -2204,7 +2445,7 @@ El servidor no debe cambiar marca, modelo ni codigo si no fueron enviados.
 3. Verificar disponibilidad nuevamente.
 4. Cambiar reserva a confirmada.
 5. Cambiar instrumento a reservado.
-6. Guardar ambos cambios atomically.
+6. Guardar ambos cambios de forma atomica.
 7. Devolver respuesta.
 
 ### 38.4 Entrega
