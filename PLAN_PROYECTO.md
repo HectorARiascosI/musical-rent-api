@@ -598,6 +598,33 @@ Define el contrato externo y evita exponer entidades JPA.
 - Fail fast.
 - Separacion de responsabilidades.
 
+### 27.1 Fundamentos del modelado de dominio
+
+El modelado de dominio traduce el problema de la tienda a objetos, relaciones, estados y reglas.
+
+- **Encapsulamiento:** `Instrumento`, `Reserva` y `Prestamo` protegen sus estados; no se permiten setters genericos para transiciones importantes.
+- **Herencia:** `GuitarraAcustica` y `GuitarraElectrica` especializan a `Instrumento`.
+- **Abstraccion:** `Instrumento` define lo comun sin representar un instrumento incompleto.
+- **Polimorfismo:** el sistema recibe un `tipo` y crea el subtipo correcto sin duplicar controllers.
+- **Reglas de negocio:** los constructores y metodos del dominio impiden estados invalidos.
+- **Objetos de valor:** `PeriodoAlquiler` agrupa fechas y valida su propia consistencia.
+- **Identidad:** las entidades usan UUID y se diferencian de objetos de valor.
+
+### 27.2 Evolucion incremental del diseno
+
+El diseno debe crecer en incrementos verificables:
+
+```text
+Problema pequeno
+    -> modelo minimo
+    -> prueba
+    -> implementacion
+    -> revision
+    -> siguiente regla
+```
+
+No se deben crear entidades futuras, patrones o endpoints solo para llenar carpetas. Cada incremento debe agregar una capacidad demostrable y mantener las pruebas anteriores.
+
 ## 28. Patrones
 
 - MVC adaptado a REST.
@@ -610,7 +637,44 @@ Define el contrato externo y evita exponer entidades JPA.
 - Unit of Work implicito de Hibernate.
 - Identity Map implicito de Hibernate.
 
-No se agregan Factory, Strategy, CQRS o microservicios sin una necesidad real.
+### 28.1 Patrones creacionales
+
+| Patron | Decision para MusicalRent | Motivo |
+|---|---|---|
+| Singleton | No implementarlo manualmente | Spring administra beans y ya controla su ciclo de vida |
+| Factory | Evaluarlo para crear subtipos de `Instrumento` | Puede centralizar la decision por `TipoInstrumento` si el mapper crece |
+| Builder | Evaluarlo solo para requests complejos | Los records simples no necesitan builders |
+
+El polimorfismo de instrumentos puede comenzar con un metodo de mapper que decide el subtipo. Si aparecen muchos tipos, se puede evolucionar a una Factory.
+
+### 28.2 Patrones estructurales
+
+| Patron | Decision para MusicalRent | Motivo |
+|---|---|---|
+| Adapter | No necesario en el MVP | No existe una API externa incompatible que adaptar |
+| Decorator | No necesario en el MVP | No se agregaran funcionalidades dinamicas a servicios en esta version |
+
+Se documentan para reconocerlos, pero no se agregan clases artificiales solo para demostrar un patron.
+
+### 28.3 Patrones comportamentales
+
+| Patron | Decision para MusicalRent | Aplicacion posible |
+|---|---|---|
+| Strategy | Evaluarlo para calculos de tarifa | Tarifas por temporada, tipo o duracion |
+| State | Aplicarlo conceptualmente en las transiciones | Estados de disponibilidad del instrumento y estados del prestamo |
+| Observer | Evaluarlo fuera del MVP | Notificar reparacion, atraso o devolucion |
+
+El patron State no obliga a crear una clase por estado desde el inicio. Primero se protegen las transiciones con metodos de dominio; si los estados crecen, se extraen objetos de estado.
+
+### 28.4 Regla para seleccionar patrones
+
+Antes de agregar un patron se debe documentar:
+
+1. Que problema concreto resuelve.
+2. Que codigo repetido o acoplado elimina.
+3. Que complejidad nueva introduce.
+4. Como se probara.
+5. Por que una solucion mas simple no es suficiente.
 
 ---
 
